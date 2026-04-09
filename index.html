@@ -276,9 +276,13 @@ let pomoPhase    = 'work';
 let pomoRound    = 0;
 let pomoRemSec   = 25*60;
 let pomoStudySec = 0;
+let pomoWorkSec = 1500;
+let pomoRestSec = 300;
+let pomoLongRestSec = 900;
+let pomoM = 4;
+let pomoTotalRounds = 8;
 
 let weekOffset = 0;
-
 let selectedColor = '';
 let dayInfoSaved  = false;
 
@@ -295,12 +299,134 @@ function setDayData(key, data) {
   const s = getStore(); s[key] = data; setStore(s);
 }
 
+function saveTimerState() {
+  if (!isRunning) {
+    localStorage.removeItem('studypal_timer');
+    return;
+  }
+  const state = {
+    mode: currentMode,
+    isRunning: true,
+    sessionStart: sessionStart ? sessionStart.toISOString() : null,
+    elapsedSec: elapsedSec,
+    pomoPhase: pomoPhase,
+    pomoRound: pomoRound,
+    pomoRemSec: pomoRemSec,
+    pomoStudySec: pomoStudySec,
+    pomoWorkSec: pomoWorkSec,
+    pomoRestSec: pomoRestSec,
+    pomoLongRestSec: pomoLongRestSec,
+    pomoM: pomoM,
+    pomoTotalRounds: pomoTotalRounds,
+    lastUpdate: Date.now()
+  };
+  localStorage.setItem('studypal_timer', JSON.stringify(state));
+}
+
+function loadTimerState() {
+  const saved = localStorage.getItem('studypal_timer');
+  if (!saved) return false;
+  try {
+    const state = JSON.parse(saved);
+    if (!state.isRunning) {
+      localStorage.removeItem('studypal_timer');
+      return false;
+    }
+    const elapsedSeconds = Math.floor((Date.now() - state.lastUpdate) / 1000);
+    if (elapsedSeconds <= 0) return false;
+    
+    currentMode = state.mode;
+    document.getElementById('btn-normal').classList.toggle('active', currentMode==='normal');
+    document.getElementById('btn-pomo').classList.toggle('active', currentMode==='pomodoro');
+    document.getElementById('pomo-settings-area').style.display = currentMode==='pomodoro' ? 'block' : 'none';
+    
+    if (currentMode === 'normal') {
+      elapsedSec = state.elapsedSec + elapsedSeconds;
+      document.getElementById('time-display').textContent = formatTime(elapsedSec);
+    } else {
+      pomoPhase = state.pomoPhase;
+      pomoRound = state.pomoRound;
+      pomoRemSec = Math.max(0, state.pomoRemSec - elapsedSeconds);
+      pomoStudySec = state.pomoStudySec + (pomoPhase === 'work' ? elapsedSeconds : 0);
+      pomoWorkSec = state.pomoWorkSec;
+      pomoRestSec = state.pomoRestSec;
+      pomoLongRestSec = state.pomoLongRestSec;
+      pomoM = state.pomoM;
+      pomoTotalRounds = state.pomoTotalRounds;
+      
+      if (pomoRemSec <= 0) {
+        if (pomoPhase === 'work') {
+          pomoRound++;
+          const endTime = new Date();
+          if (state.sessionStart) {
+            const startTime = new Date(state.sessionStart);
+            const studySecs = Math.floor((endTime - startTime) / 1000);
+            if (studySecs > 0) persistSession('pomodoro-work', startTime, endTime, studySecs);
+          }
+          if (pomoRound >= pomoTotalRounds) {
+            isRunning = false;
+            localStorage.removeItem('studypal_timer');
+            document.getElementById('btn-start').disabled = false;
+            document.getElementById('btn-stop').disabled = true;
+            document.getElementById('btn-normal').classList.remove('locked');
+            document.getElementById('btn-pomo').classList.remove('locked');
+            document.getElementById('phase-label').className = 'phase-label phase-work';
+            document.getElementById('phase-label').textContent = '🎉 All Done!';
+            document.getElementById('time-display').textContent = formatTime(0);
+            renderRoundDots();
+            renderTodaySessions();
+            renderChart();
+            return false;
+          }
+          if (pomoRound % pomoM === 0) {
+            pomoPhase = 'longrest';
+            pomoRemSec = pomoLongRestSec;
+          } else {
+            pomoPhase = 'rest';
+            pomoRemSec = pomoRestSec;
+          }
+          pomoStudySec = 0;
+          sessionStart = new Date();
+        } else {
+          pomoPhase = 'work';
+          pomoRemSec = pomoWorkSec;
+          sessionStart = new Date();
+        }
+      } else {
+        sessionStart = state.sessionStart ? new Date(state.sessionStart) : new Date(Date.now() - elapsedSeconds * 1000);
+      }
+      
+      document.getElementById('time-display').textContent = formatTime(pomoRemSec);
+      updatePomoDisplay();
+      renderRoundDots();
+    }
+    
+    isRunning = true;
+    sessionStart = sessionStart || new Date();
+    document.getElementById('btn-start').disabled = true;
+    document.getElementById('btn-stop').disabled = false;
+    document.getElementById('btn-normal').classList.add('locked');
+    document.getElementById('btn-pomo').classList.add('locked');
+    
+    timerInterval = setInterval(currentMode === 'normal' ? tickNormal : tickPomo, 1000);
+    setEncourage();
+    return true;
+  } catch(e) {
+    localStorage.removeItem('studypal_timer');
+    return false;
+  }
+}
+
 window.onload = function() {
   renderColorPick();
   loadTodayInfo();
   checkDayInfoSaved();
   renderTodaySessions();
   renderChart();
+  const restored = loadTimerState();
+  if (!restored) {
+    resetTimer();
+  }
 };
 
 function renderColorPick() {
@@ -431,6 +557,7 @@ function stopTimer() {
   document.getElementById('lock-hint').classList.remove('visible');
   document.getElementById('phase-label').className   = 'phase-label phase-normal';
   document.getElementById('phase-label').textContent = '⏸ Paused';
+  localStorage.removeItem('studypal_timer');
 
   if (sessionStart) {
     const now = new Date();
@@ -453,6 +580,8 @@ function stopTimer() {
 function resetTimer() {
   if (isRunning) stopTimer();
   clearInterval(timerInterval);
+  isRunning = false;
+  localStorage.removeItem('studypal_timer');
   elapsedSec   = 0;
   pomoRound    = 0;
   pomoPhase    = 'work';
@@ -472,12 +601,11 @@ function resetTimer() {
   setEncourage();
 }
 
-let pomoM = 4, pomoTotalRounds = 8, pomoWorkSec = 1500, pomoRestSec = 300, pomoLongRestSec = 900;
-
 function tickNormal() {
   elapsedSec++;
   document.getElementById('time-display').textContent = formatTime(elapsedSec);
   if (elapsedSec % 30 === 0) setEncourage();
+  saveTimerState();
 }
 
 function tickPomo() {
@@ -487,6 +615,7 @@ function tickPomo() {
     elapsedSec++;
   }
   updatePomoDisplay();
+  saveTimerState();
 
   if (pomoRemSec <= 0) {
     if (pomoPhase === 'work') {
@@ -498,6 +627,7 @@ function tickPomo() {
       if (pomoRound >= pomoTotalRounds) {
         clearInterval(timerInterval);
         isRunning = false;
+        localStorage.removeItem('studypal_timer');
         document.getElementById('btn-start').disabled = false;
         document.getElementById('btn-stop').disabled  = true;
         document.getElementById('btn-normal').classList.remove('locked');
