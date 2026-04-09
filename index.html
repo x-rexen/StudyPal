@@ -266,15 +266,15 @@ const ENCOURAGE = [
   '🎉 You\'re crushing it today!', '✨ Future you will thank present you!'
 ];
 
-let currentMode   = 'normal';
-let isRunning     = false;
-let timerInterval = null;
-let sessionStart  = null;
-let elapsedSec    = 0;
+let currentMode = 'normal';
+let isRunning = false;
+let timerUpdateInterval = null;
+let sessionStart = null;
+let elapsedSec = 0;
 
-let pomoPhase    = 'work';
-let pomoRound    = 0;
-let pomoRemSec   = 25*60;
+let pomoPhase = 'work';
+let pomoRound = 0;
+let pomoRemSec = 25*60;
 let pomoStudySec = 0;
 let pomoWorkSec = 1500;
 let pomoRestSec = 300;
@@ -284,7 +284,7 @@ let pomoTotalRounds = 8;
 
 let weekOffset = 0;
 let selectedColor = '';
-let dayInfoSaved  = false;
+let dayInfoSaved = false;
 
 function getStore() { try { return JSON.parse(localStorage.getItem('studypal')||'{}'); } catch { return {}; } }
 function setStore(d) { localStorage.setItem('studypal', JSON.stringify(d)); }
@@ -307,7 +307,7 @@ function saveTimerState() {
   const state = {
     mode: currentMode,
     isRunning: true,
-    sessionStart: sessionStart ? sessionStart.toISOString() : null,
+    startTime: sessionStart,
     elapsedSec: elapsedSec,
     pomoPhase: pomoPhase,
     pomoRound: pomoRound,
@@ -317,8 +317,7 @@ function saveTimerState() {
     pomoRestSec: pomoRestSec,
     pomoLongRestSec: pomoLongRestSec,
     pomoM: pomoM,
-    pomoTotalRounds: pomoTotalRounds,
-    lastUpdate: Date.now()
+    pomoTotalRounds: pomoTotalRounds
   };
   localStorage.setItem('studypal_timer', JSON.stringify(state));
 }
@@ -332,8 +331,9 @@ function loadTimerState() {
       localStorage.removeItem('studypal_timer');
       return false;
     }
-    const elapsedSeconds = Math.floor((Date.now() - state.lastUpdate) / 1000);
-    if (elapsedSeconds <= 0) return false;
+    
+    const now = Date.now();
+    const elapsedSeconds = Math.floor((now - state.startTime) / 1000);
     
     currentMode = state.mode;
     document.getElementById('btn-normal').classList.toggle('active', currentMode==='normal');
@@ -344,56 +344,52 @@ function loadTimerState() {
       elapsedSec = state.elapsedSec + elapsedSeconds;
       document.getElementById('time-display').textContent = formatTime(elapsedSec);
     } else {
+      let remainingSeconds = state.pomoRemSec - elapsedSeconds;
+      let studyAdded = 0;
+      
+      if (state.pomoPhase === 'work') {
+        studyAdded = Math.min(elapsedSeconds, state.pomoRemSec);
+      }
+      
       pomoPhase = state.pomoPhase;
       pomoRound = state.pomoRound;
-      pomoRemSec = Math.max(0, state.pomoRemSec - elapsedSeconds);
-      pomoStudySec = state.pomoStudySec + (pomoPhase === 'work' ? elapsedSeconds : 0);
+      pomoRemSec = Math.max(0, remainingSeconds);
+      pomoStudySec = state.pomoStudySec + studyAdded;
       pomoWorkSec = state.pomoWorkSec;
       pomoRestSec = state.pomoRestSec;
       pomoLongRestSec = state.pomoLongRestSec;
       pomoM = state.pomoM;
       pomoTotalRounds = state.pomoTotalRounds;
       
-      if (pomoRemSec <= 0) {
-        if (pomoPhase === 'work') {
-          pomoRound++;
-          const endTime = new Date();
-          if (state.sessionStart) {
-            const startTime = new Date(state.sessionStart);
-            const studySecs = Math.floor((endTime - startTime) / 1000);
-            if (studySecs > 0) persistSession('pomodoro-work', startTime, endTime, studySecs);
-          }
-          if (pomoRound >= pomoTotalRounds) {
-            isRunning = false;
-            localStorage.removeItem('studypal_timer');
-            document.getElementById('btn-start').disabled = false;
-            document.getElementById('btn-stop').disabled = true;
-            document.getElementById('btn-normal').classList.remove('locked');
-            document.getElementById('btn-pomo').classList.remove('locked');
-            document.getElementById('phase-label').className = 'phase-label phase-work';
-            document.getElementById('phase-label').textContent = '🎉 All Done!';
-            document.getElementById('time-display').textContent = formatTime(0);
-            renderRoundDots();
-            renderTodaySessions();
-            renderChart();
-            return false;
-          }
-          if (pomoRound % pomoM === 0) {
-            pomoPhase = 'longrest';
-            pomoRemSec = pomoLongRestSec;
-          } else {
-            pomoPhase = 'rest';
-            pomoRemSec = pomoRestSec;
-          }
-          pomoStudySec = 0;
-          sessionStart = new Date();
-        } else {
-          pomoPhase = 'work';
-          pomoRemSec = pomoWorkSec;
-          sessionStart = new Date();
+      if (pomoRemSec <= 0 && pomoPhase === 'work') {
+        pomoRound++;
+        if (pomoRound >= pomoTotalRounds) {
+          isRunning = false;
+          localStorage.removeItem('studypal_timer');
+          document.getElementById('btn-start').disabled = false;
+          document.getElementById('btn-stop').disabled = true;
+          document.getElementById('btn-normal').classList.remove('locked');
+          document.getElementById('btn-pomo').classList.remove('locked');
+          document.getElementById('phase-label').className = 'phase-label phase-work';
+          document.getElementById('phase-label').textContent = '🎉 All Done!';
+          document.getElementById('time-display').textContent = formatTime(0);
+          renderRoundDots();
+          renderTodaySessions();
+          renderChart();
+          return false;
         }
-      } else {
-        sessionStart = state.sessionStart ? new Date(state.sessionStart) : new Date(Date.now() - elapsedSeconds * 1000);
+        if (pomoRound % pomoM === 0) {
+          pomoPhase = 'longrest';
+          pomoRemSec = pomoLongRestSec;
+        } else {
+          pomoPhase = 'rest';
+          pomoRemSec = pomoRestSec;
+        }
+        pomoStudySec = 0;
+      } else if (pomoRemSec <= 0 && pomoPhase !== 'work') {
+        pomoPhase = 'work';
+        pomoRemSec = pomoWorkSec;
+        pomoStudySec = 0;
       }
       
       document.getElementById('time-display').textContent = formatTime(pomoRemSec);
@@ -402,19 +398,91 @@ function loadTimerState() {
     }
     
     isRunning = true;
-    sessionStart = sessionStart || new Date();
+    sessionStart = state.startTime;
     document.getElementById('btn-start').disabled = true;
     document.getElementById('btn-stop').disabled = false;
     document.getElementById('btn-normal').classList.add('locked');
     document.getElementById('btn-pomo').classList.add('locked');
     
-    timerInterval = setInterval(currentMode === 'normal' ? tickNormal : tickPomo, 1000);
+    startTimerUpdate();
     setEncourage();
     return true;
   } catch(e) {
     localStorage.removeItem('studypal_timer');
     return false;
   }
+}
+
+function startTimerUpdate() {
+  if (timerUpdateInterval) clearInterval(timerUpdateInterval);
+  timerUpdateInterval = setInterval(() => {
+    if (!isRunning) return;
+    const now = Date.now();
+    const elapsed = Math.floor((now - sessionStart) / 1000);
+    
+    if (currentMode === 'normal') {
+      const displaySec = elapsedSec + elapsed;
+      document.getElementById('time-display').textContent = formatTime(displaySec);
+      if (displaySec % 30 === 0) setEncourage();
+    } else {
+      let remaining = pomoRemSec - elapsed;
+      let currentStudySec = pomoStudySec;
+      
+      if (pomoPhase === 'work') {
+        const studyElapsed = Math.min(elapsed, pomoRemSec);
+        currentStudySec = pomoStudySec + studyElapsed;
+        remaining = pomoRemSec - elapsed;
+      }
+      
+      if (remaining <= 0) {
+        if (pomoPhase === 'work') {
+          const newRound = pomoRound + 1;
+          if (newRound >= pomoTotalRounds) {
+            stopTimer();
+            document.getElementById('phase-label').className = 'phase-label phase-work';
+            document.getElementById('phase-label').textContent = '🎉 All Done!';
+            showNotif('🎉 Pomodoro complete! Incredible work!');
+            return;
+          }
+          const endTime = new Date();
+          persistSession('pomodoro-work', new Date(sessionStart), endTime, currentStudySec);
+          
+          if (newRound % pomoM === 0) {
+            pomoPhase = 'longrest';
+            remaining = pomoLongRestSec;
+          } else {
+            pomoPhase = 'rest';
+            remaining = pomoRestSec;
+          }
+          
+          pomoRound = newRound;
+          pomoRemSec = remaining;
+          pomoStudySec = 0;
+          sessionStart = now;
+          renderRoundDots();
+          showNotif(pomoPhase === 'longrest' ? '🌙 Long Break! Well deserved rest!' : '☕ Short Break! Breathe & stretch!');
+        } else {
+          const endTime = new Date();
+          const restType = pomoPhase === 'longrest' ? 'long-rest' : 'short-rest';
+          const restDur = pomoPhase === 'longrest' ? pomoLongRestSec : pomoRestSec;
+          persistSession(restType, new Date(sessionStart), endTime, restDur);
+          
+          pomoPhase = 'work';
+          remaining = pomoWorkSec;
+          pomoRemSec = remaining;
+          pomoStudySec = 0;
+          sessionStart = now;
+          showNotif('🍅 Back to work! You\'ve got this!');
+        }
+        renderTodaySessions();
+        renderChart();
+      }
+      
+      document.getElementById('time-display').textContent = formatTime(Math.max(0, remaining));
+      updatePomoDisplay();
+      if (Math.floor(elapsed) % 30 === 0) setEncourage();
+    }
+  }, 100);
 }
 
 window.onload = function() {
@@ -516,62 +584,99 @@ function startTimer() {
   }
   if (isRunning) return;
 
-  isRunning    = true;
-  sessionStart = new Date();
-  document.getElementById('btn-start').disabled = true;
-  document.getElementById('btn-stop').disabled  = false;
-  document.getElementById('btn-normal').classList.add('locked');
-  document.getElementById('btn-pomo').classList.add('locked');
-
+  isRunning = true;
+  sessionStart = Date.now();
+  
   if (currentMode === 'normal') {
-    document.getElementById('phase-label').className     = 'phase-label phase-work';
-    document.getElementById('phase-label').textContent   = '📖 Studying…';
-    timerInterval = setInterval(tickNormal, 1000);
+    document.getElementById('phase-label').className = 'phase-label phase-work';
+    document.getElementById('phase-label').textContent = '📖 Studying…';
   } else {
-    const workMin  = parseInt(document.getElementById('pomo-work').value)      || 25;
-    const restMin  = parseInt(document.getElementById('pomo-rest').value)       || 5;
-    const longMin  = parseInt(document.getElementById('pomo-long-rest').value)  || 15;
-    pomoM          = parseInt(document.getElementById('pomo-m').value)           || 4;
-    pomoTotalRounds= parseInt(document.getElementById('pomo-total').value)       || 8;
-    pomoWorkSec    = workMin  * 60;
-    pomoRestSec    = restMin  * 60;
-    pomoLongRestSec= longMin  * 60;
-
-    if (pomoPhase === 'work' && pomoRound === 0) pomoRemSec = pomoWorkSec;
+    const workMin = parseInt(document.getElementById('pomo-work').value) || 25;
+    const restMin = parseInt(document.getElementById('pomo-rest').value) || 5;
+    const longMin = parseInt(document.getElementById('pomo-long-rest').value) || 15;
+    pomoM = parseInt(document.getElementById('pomo-m').value) || 4;
+    pomoTotalRounds = parseInt(document.getElementById('pomo-total').value) || 8;
+    pomoWorkSec = workMin * 60;
+    pomoRestSec = restMin * 60;
+    pomoLongRestSec = longMin * 60;
+    
+    if (pomoPhase === 'work' && pomoRound === 0) {
+      pomoRemSec = pomoWorkSec;
+    }
     pomoStudySec = 0;
     renderRoundDots();
     updatePomoDisplay();
-    timerInterval = setInterval(tickPomo, 1000);
   }
+  
+  document.getElementById('btn-start').disabled = true;
+  document.getElementById('btn-stop').disabled = false;
+  document.getElementById('btn-normal').classList.add('locked');
+  document.getElementById('btn-pomo').classList.add('locked');
+  
+  saveTimerState();
+  startTimerUpdate();
   setEncourage();
 }
 
 function stopTimer() {
   if (!isRunning) return;
-  clearInterval(timerInterval);
+  
+  if (timerUpdateInterval) {
+    clearInterval(timerUpdateInterval);
+    timerUpdateInterval = null;
+  }
+  
+  const now = Date.now();
+  const elapsed = Math.floor((now - sessionStart) / 1000);
+  
+  if (currentMode === 'normal') {
+    const totalElapsed = elapsedSec + elapsed;
+    if (totalElapsed > 0) {
+      persistSession('normal', new Date(sessionStart), new Date(now), totalElapsed);
+    }
+    elapsedSec = 0;
+  } else {
+    if (pomoPhase === 'work') {
+      const studyElapsed = Math.min(elapsed, pomoRemSec);
+      const totalStudy = pomoStudySec + studyElapsed;
+      if (totalStudy > 0) {
+        persistSession('pomodoro-work', new Date(sessionStart), new Date(now), totalStudy);
+      }
+    } else {
+      const restType = pomoPhase === 'longrest' ? 'long-rest' : 'short-rest';
+      const restDur = pomoPhase === 'longrest' ? pomoLongRestSec : pomoRestSec;
+      const actualRest = Math.min(elapsed, restDur);
+      if (actualRest > 0) {
+        persistSession(restType, new Date(sessionStart), new Date(now), actualRest);
+      }
+    }
+  }
+  
   isRunning = false;
+  localStorage.removeItem('studypal_timer');
+  
   document.getElementById('btn-start').disabled = false;
-  document.getElementById('btn-stop').disabled  = true;
+  document.getElementById('btn-stop').disabled = true;
   document.getElementById('btn-normal').classList.remove('locked');
   document.getElementById('btn-pomo').classList.remove('locked');
   document.getElementById('lock-hint').classList.remove('visible');
-  document.getElementById('phase-label').className   = 'phase-label phase-normal';
+  document.getElementById('phase-label').className = 'phase-label phase-normal';
   document.getElementById('phase-label').textContent = '⏸ Paused';
-  localStorage.removeItem('studypal_timer');
-
-  if (sessionStart) {
-    const now = new Date();
-    if (currentMode === 'normal') {
-      const dur = Math.floor((now - sessionStart) / 1000);
-      if (dur > 0) persistSession('normal', sessionStart, now, dur);
-    } else {
-      if (pomoStudySec > 0 && pomoPhase === 'work') {
-        persistSession('pomodoro-work', sessionStart, now, pomoStudySec);
-      }
-    }
-    sessionStart = null;
+  
+  if (currentMode === 'normal') {
+    elapsedSec = 0;
+    document.getElementById('time-display').textContent = '00:00:00';
+  } else {
+    const workMin = parseInt(document.getElementById('pomo-work').value) || 25;
+    pomoRemSec = workMin * 60;
+    pomoRound = 0;
+    pomoPhase = 'work';
     pomoStudySec = 0;
+    document.getElementById('time-display').textContent = formatTime(pomoRemSec);
+    updatePomoDisplay();
+    renderRoundDots();
   }
+  
   setEncourage();
   renderTodaySessions();
   renderChart();
@@ -579,21 +684,28 @@ function stopTimer() {
 
 function resetTimer() {
   if (isRunning) stopTimer();
-  clearInterval(timerInterval);
+  
+  if (timerUpdateInterval) {
+    clearInterval(timerUpdateInterval);
+    timerUpdateInterval = null;
+  }
+  
   isRunning = false;
   localStorage.removeItem('studypal_timer');
-  elapsedSec   = 0;
-  pomoRound    = 0;
-  pomoPhase    = 'work';
+  
+  elapsedSec = 0;
+  pomoRound = 0;
+  pomoPhase = 'work';
   const workMin = parseInt(document.getElementById('pomo-work')?.value) || 25;
-  pomoRemSec   = workMin * 60;
+  pomoRemSec = workMin * 60;
   pomoStudySec = 0;
   sessionStart = null;
+  
   document.getElementById('time-display').textContent = currentMode === 'normal' ? '00:00:00' : formatTime(pomoRemSec);
-  document.getElementById('phase-label').className   = 'phase-label phase-normal';
+  document.getElementById('phase-label').className = 'phase-label phase-normal';
   document.getElementById('phase-label').textContent = 'Ready to Study!';
   document.getElementById('btn-start').disabled = !dayInfoSaved;
-  document.getElementById('btn-stop').disabled  = true;
+  document.getElementById('btn-stop').disabled = true;
   document.getElementById('round-dots').innerHTML = '';
   document.getElementById('btn-normal').classList.remove('locked');
   document.getElementById('btn-pomo').classList.remove('locked');
@@ -601,80 +713,15 @@ function resetTimer() {
   setEncourage();
 }
 
-function tickNormal() {
-  elapsedSec++;
-  document.getElementById('time-display').textContent = formatTime(elapsedSec);
-  if (elapsedSec % 30 === 0) setEncourage();
-  saveTimerState();
-}
-
-function tickPomo() {
-  pomoRemSec--;
-  if (pomoPhase === 'work') {
-    pomoStudySec++;
-    elapsedSec++;
-  }
-  updatePomoDisplay();
-  saveTimerState();
-
-  if (pomoRemSec <= 0) {
-    if (pomoPhase === 'work') {
-      pomoRound++;
-      const now = new Date();
-      persistSession('pomodoro-work', sessionStart, now, pomoStudySec);
-      sessionStart = new Date(); pomoStudySec = 0;
-
-      if (pomoRound >= pomoTotalRounds) {
-        clearInterval(timerInterval);
-        isRunning = false;
-        localStorage.removeItem('studypal_timer');
-        document.getElementById('btn-start').disabled = false;
-        document.getElementById('btn-stop').disabled  = true;
-        document.getElementById('btn-normal').classList.remove('locked');
-        document.getElementById('btn-pomo').classList.remove('locked');
-        document.getElementById('phase-label').className   = 'phase-label phase-work';
-        document.getElementById('phase-label').textContent = '🎉 All Done!';
-        showNotif('🎉 Pomodoro complete! Incredible work!');
-        renderRoundDots();
-        renderTodaySessions();
-        renderChart();
-        return;
-      }
-
-      if (pomoRound % pomoM === 0) {
-        pomoPhase = 'longrest'; pomoRemSec = pomoLongRestSec;
-        showNotif('🌙 Long Break! Well deserved rest!');
-      } else {
-        pomoPhase = 'rest'; pomoRemSec = pomoRestSec;
-        showNotif('☕ Short Break! Breathe & stretch!');
-      }
-      renderRoundDots();
-    } else {
-      const now = new Date();
-      const restType = pomoPhase === 'longrest' ? 'long-rest' : 'short-rest';
-      const restDur  = pomoPhase === 'longrest' ? pomoLongRestSec : pomoRestSec;
-      persistSession(restType, sessionStart, now, restDur);
-      sessionStart = new Date(); pomoStudySec = 0;
-      pomoPhase = 'work'; pomoRemSec = pomoWorkSec;
-      showNotif('🍅 Back to work! You\'ve got this!');
-    }
-    updatePomoDisplay();
-    renderTodaySessions();
-    renderChart();
-  }
-  if (elapsedSec % 30 === 0) setEncourage();
-}
-
 function updatePomoDisplay() {
-  document.getElementById('time-display').textContent = formatTime(pomoRemSec);
   if (pomoPhase === 'work') {
-    document.getElementById('phase-label').className   = 'phase-label phase-work';
+    document.getElementById('phase-label').className = 'phase-label phase-work';
     document.getElementById('phase-label').textContent = `🍅 Round ${pomoRound+1}/${pomoTotalRounds}`;
   } else if (pomoPhase === 'rest') {
-    document.getElementById('phase-label').className   = 'phase-label phase-rest';
+    document.getElementById('phase-label').className = 'phase-label phase-rest';
     document.getElementById('phase-label').textContent = '☕ Short Break';
   } else {
-    document.getElementById('phase-label').className   = 'phase-label phase-rest';
+    document.getElementById('phase-label').className = 'phase-label phase-rest';
     document.getElementById('phase-label').textContent = '🌙 Long Break';
   }
 }
@@ -692,7 +739,7 @@ function renderRoundDots() {
 function persistSession(type, start, end, studySecs) {
   if (!start || studySecs <= 0) return;
   const key = getDateKey(start);
-  const d   = getDayData(key);
+  const d = getDayData(key);
   d.sessions.push({ type, start: start.toISOString(), end: end.toISOString(), studySecs });
   const isStudy = type === 'normal' || type === 'pomodoro-work';
   if (isStudy) d.totalSeconds = (d.totalSeconds || 0) + studySecs;
